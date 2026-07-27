@@ -23,7 +23,7 @@ def lookup_experiences(
     if limit < 0:
         raise ValueError("limit must be non-negative")
     requested_tiers: set[str] | None = None
-    if tiers is not None:
+    if tiers:
         requested_tiers = set()
         for value in tiers:
             try:
@@ -36,6 +36,7 @@ def lookup_experiences(
     query_terms = set(tokenize_experience_text(query))
     if not normalized_query and not query_terms:
         return []
+    list_visible = normalized_query == "*"
 
     hits: list[MaintenanceLookupHit] = []
     for entry in entries:
@@ -52,7 +53,11 @@ def lookup_experiences(
             if normalized_query and normalized_query in normalize_content(entry.content)
             else 0.0
         )
-        score = 1.0 if exact_id_match else min(1.0, coverage + substring_bonus)
+        score = (
+            1.0
+            if list_visible or exact_id_match
+            else min(1.0, coverage + substring_bonus)
+        )
         if score <= 0:
             continue
         hits.append(MaintenanceLookupHit(

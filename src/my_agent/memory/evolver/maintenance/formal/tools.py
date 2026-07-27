@@ -15,7 +15,11 @@ from my_agent.memory.evolver.maintenance.contracts import (
     _source_precondition,
 )
 from my_agent.memory.experience.serialization import experience_payload_from_dict
-from my_agent.memory.experience.models import ExperienceCreatedBy, ExperienceMemory
+from my_agent.memory.experience.models import (
+    ExperienceCreatedBy,
+    ExperienceMemory,
+    ExperienceTier,
+)
 from my_agent.memory.token import estimate_tokens
 from my_agent.memory.types import content_fingerprint
 from my_agent.policy.identity import canonical_json_bytes, canonical_sha256
@@ -23,6 +27,7 @@ from my_agent.training.role_views import CanonicalTool, CanonicalToolCall
 
 
 FORMAL_MAINTENANCE_TOOL_NAMES = frozenset({"lookup", "merge", "delete", "finish"})
+_EXPERIENCE_TIER_VALUES = tuple(tier.value for tier in ExperienceTier)
 
 
 @dataclass(frozen=True)
@@ -36,12 +41,17 @@ def formal_maintenance_tools() -> tuple[CanonicalTool, ...]:
     return tuple(_tool(name, description, parameters) for name, description, parameters in (
         (
             "lookup",
-            "Inspect matching repository memories by content query or exact memory ID without mutating the staged plan.",
+            "Inspect repository memories by content query or exact memory ID without "
+            "mutating the staged plan. Use '*' to list visible memories. Omit tiers or "
+            "pass an empty array to search all tiers.",
             {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "tiers": {"type": "array", "items": {"type": "string"}},
+                    "query": {"type": "string", "minLength": 1},
+                    "tiers": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(_EXPERIENCE_TIER_VALUES)},
+                    },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                 },
                 "required": ["query"],
@@ -204,13 +214,17 @@ def _validate_command_shape(name: str, arguments: Mapping[str, Any]) -> None:
     if not required.issubset(arguments) or not set(arguments).issubset(allowed):
         raise ValueError(f"{name} tool arguments do not match the formal schema")
     if name == "lookup":
-        if not isinstance(arguments["query"], str):
-            raise ValueError("lookup query must be a string")
+        if not isinstance(arguments["query"], str) or not arguments["query"].strip():
+            raise ValueError("lookup query must be a non-empty string")
         tiers = arguments.get("tiers")
         if tiers is not None and (
             not isinstance(tiers, list) or any(not isinstance(item, str) for item in tiers)
         ):
             raise ValueError("lookup tiers must be an array of strings")
+        if tiers is not None:
+            invalid_tiers = [item for item in tiers if item not in _EXPERIENCE_TIER_VALUES]
+            if invalid_tiers:
+                raise ValueError(f"invalid experience tier: {invalid_tiers[0]!r}")
         limit = arguments.get("limit")
         if limit is not None and (
             isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50

@@ -47,10 +47,11 @@ def maintenance_initial_messages(public: MaintenancePublic) -> tuple[CanonicalMe
             "Issue exactly one tool call per turn and no prose. All mutations are staged until "
             "finish. Use source_ids only from repository_snapshot.memory_ids or earlier lookup "
             "hits; never invent memory IDs. Use lookup before changing memories whose content "
-            "has not been inspected. Merge only same-tier memories and preserve that tier's "
-            "payload schema. Delete only when the supplied repository/history evidence supports "
-            "removal. If the repository is empty or no safe change is needed, call finish with "
-            "a short summary.",
+            "has not been inspected. Use lookup query '*' to list visible memories. Lookup tiers "
+            "are trajectory, tip, skill, and tool; omit tiers or pass an empty array to search all "
+            "tiers. Merge only same-tier memories and preserve that tier's payload schema. Delete "
+            "only when the supplied repository/history evidence supports removal. If the "
+            "repository is empty or no safe change is needed, call finish with a short summary.",
         ),
         CanonicalMessage(
             "user",
