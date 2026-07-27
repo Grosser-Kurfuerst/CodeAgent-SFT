@@ -198,7 +198,7 @@ def _fixture_workspace(
     lifelong_digest = canonical_sha256("lifelong-image")
     intercode_digest = canonical_sha256("intercode-image")
     source_lock = {
-        "schema_version": "memory-benchmark-source-lock-v1",
+        "schema_version": "memory-benchmark-source-lock-v2",
         "sources": {
             "lifelong_agent_bench": {
                 "url": "https://example.com/lifelong",

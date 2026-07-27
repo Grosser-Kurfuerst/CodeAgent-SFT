@@ -12,7 +12,7 @@
       "subset": "os",
       "source_split": "train",
       "evaluation_split": "test",
-      "limit": 40,
+      "limit": 100,
       "order_policy": "source_order"
     },
     "intercode_bash": {
@@ -20,7 +20,7 @@
       "subset": "bash",
       "source_split": "official_file",
       "evaluation_split": "test",
-      "limit": 40,
+      "limit": 100,
       "order_policy": "source_order"
     }
   },
@@ -57,7 +57,7 @@
     "mem0_search_limit": 50
   },
   "output_root": "evaluationResults/memory_benchmark",
-  "seeds": [42, 43, 44],
+  "seeds": [42],
   "actor_sampling_seed_supported": false,
   "smoke": {
     "task_count": 8,

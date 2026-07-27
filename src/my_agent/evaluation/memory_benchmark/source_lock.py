@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-SOURCE_LOCK_SCHEMA_VERSION = "memory-benchmark-source-lock-v1"
+SOURCE_LOCK_SCHEMA_VERSION = "memory-benchmark-source-lock-v2"
 REQUIRED_SOURCES = frozenset({"lifelong_agent_bench", "intercode"})
 
 _REQUIRED_SOURCE_FIELDS = frozenset(
@@ -19,7 +19,6 @@ _REQUIRED_SOURCE_FIELDS = frozenset(
         "url",
         "revision",
         "license",
-        "task_data_path",
         "evaluator_entrypoint",
         "container_image",
         "container_digest",
@@ -108,8 +107,7 @@ def _validate_source(source_name: str, source: Mapping[str, Any]) -> None:
     license_name = _required_string(source, "license", source_name)
     _reject_placeholder(license_name, field_name=f"{source_name}.license")
 
-    task_data_path = _required_string(source, "task_data_path", source_name)
-    _validate_relative_path(task_data_path, field_name=f"{source_name}.task_data_path")
+    _validate_task_data(source_name, source)
 
     evaluator = _required_string(source, "evaluator_entrypoint", source_name)
     _reject_placeholder(evaluator, field_name=f"{source_name}.evaluator_entrypoint")
@@ -158,6 +156,42 @@ def _required_string(source: Mapping[str, Any], field_name: str, source_name: st
     normalized = value.strip()
     _reject_placeholder(normalized, field_name=f"{source_name}.{field_name}")
     return normalized
+
+
+def _validate_task_data(source_name: str, source: Mapping[str, Any]) -> None:
+    has_single = source.get("task_data_path") is not None
+    has_multiple = source.get("task_data_files") is not None
+    if has_single == has_multiple:
+        raise SourceLockError(
+            f"source {source_name} requires exactly one of task_data_path or task_data_files"
+        )
+    if has_single:
+        task_data_path = _required_string(source, "task_data_path", source_name)
+        _validate_relative_path(
+            task_data_path,
+            field_name=f"{source_name}.task_data_path",
+        )
+        return
+
+    raw_files = source.get("task_data_files")
+    if not isinstance(raw_files, Sequence) or isinstance(raw_files, (str, bytes)):
+        raise SourceLockError(f"{source_name}.task_data_files must be an array")
+    if not raw_files:
+        raise SourceLockError(f"{source_name}.task_data_files must not be empty")
+    seen_paths: set[str] = set()
+    for index, item in enumerate(raw_files):
+        field_name = f"{source_name}.task_data_files[{index}]"
+        if not isinstance(item, Mapping) or set(item) != {"path", "sha256"}:
+            raise SourceLockError(f"{field_name} must contain exactly path and sha256")
+        path = _required_string(item, "path", field_name)
+        _validate_relative_path(path, field_name=f"{field_name}.path")
+        if path in seen_paths:
+            raise SourceLockError(
+                f"{source_name}.task_data_files contains duplicate path {path!r}"
+            )
+        seen_paths.add(path)
+        sha256 = _required_string(item, "sha256", field_name)
+        _validate_sha256(sha256, field_name=f"{field_name}.sha256")
 
 
 def _reject_placeholder(value: str, *, field_name: str) -> None:

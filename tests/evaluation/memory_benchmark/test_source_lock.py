@@ -29,6 +29,69 @@ def test_valid_source_lock_loads() -> None:
     assert set(payload["sources"]) == {"lifelong_agent_bench", "intercode"}
 
 
+def test_valid_multi_file_task_data_is_accepted() -> None:
+    payload = _fixture()
+    source = payload["sources"]["intercode"]
+    del source["task_data_path"]
+    source.pop("task_data_sha256", None)
+    source["task_data_files"] = [
+        {
+            "path": "data/nl2bash/nl2bash_fs_1.json",
+            "sha256": f"sha256:{'1' * 64}",
+        },
+        {
+            "path": "data/nl2bash/nl2bash_fs_2.json",
+            "sha256": f"sha256:{'2' * 64}",
+        },
+    ]
+
+    validate_source_lock(payload)
+
+
+@pytest.mark.parametrize(
+    ("task_data_files", "match"),
+    [
+        ([], "must not be empty"),
+        (
+            [
+                {"path": "data/tasks.json", "sha256": f"sha256:{'1' * 64}"},
+                {"path": "data/tasks.json", "sha256": f"sha256:{'2' * 64}"},
+            ],
+            "duplicate path",
+        ),
+        (
+            [{"path": "data/tasks.json", "sha256": "sha256:invalid"}],
+            "sha256",
+        ),
+    ],
+)
+def test_invalid_multi_file_task_data_is_rejected(
+    task_data_files: list[dict[str, str]],
+    match: str,
+) -> None:
+    payload = _fixture()
+    source = payload["sources"]["intercode"]
+    del source["task_data_path"]
+    source.pop("task_data_sha256", None)
+    source["task_data_files"] = task_data_files
+
+    with pytest.raises(SourceLockError, match=match):
+        validate_source_lock(payload)
+
+
+def test_single_and_multi_file_task_data_cannot_be_combined() -> None:
+    payload = _fixture()
+    payload["sources"]["intercode"]["task_data_files"] = [
+        {
+            "path": "data/nl2bash/nl2bash_fs_2.json",
+            "sha256": f"sha256:{'2' * 64}",
+        }
+    ]
+
+    with pytest.raises(SourceLockError, match="exactly one"):
+        validate_source_lock(payload)
+
+
 @pytest.mark.parametrize("revision", ["", "main", "master", "latest", "abc123"])
 def test_moving_or_incomplete_revision_is_rejected(revision: str) -> None:
     payload = _fixture()

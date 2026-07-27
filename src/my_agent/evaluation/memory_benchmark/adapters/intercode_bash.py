@@ -44,7 +44,9 @@ _EVALUATOR_MAX_OUTPUT_CHARS = 1_000_000
 @dataclass(frozen=True)
 class _OfficialBashTask:
     task_id: str
+    source_file: str
     source_index: int
+    global_index: int
     instruction: str
     gold_command: str | tuple[str, ...]
     content_hash: str
@@ -58,7 +60,8 @@ class InterCodeBashAdapter:
     def __init__(
         self,
         *,
-        task_data_path: str | Path,
+        task_data_path: str | Path | None = None,
+        task_data_paths: Sequence[str | Path] = (),
         source: Mapping[str, Any],
         run_id: str,
         runtime_root: str | Path,
@@ -68,14 +71,20 @@ class InterCodeBashAdapter:
     ) -> None:
         if not str(run_id).strip():
             raise ValueError("InterCode Bash run_id must be non-empty")
-        self.task_data_path = Path(task_data_path).expanduser().resolve()
+        self.task_data_files = _locked_task_data_files(
+            task_data_path=task_data_path,
+            task_data_paths=task_data_paths,
+            source=source,
+        )
+        self.task_data_path = self.task_data_files[0][0]
+        self.task_data_sha256 = self.task_data_files[0][1]
+        self.multi_file = len(self.task_data_files) > 1
+        self.task_subset = "nl2bash_all" if self.multi_file else "nl2bash_fs_1"
         self.source_revision = _required_string(source, "revision")
         self.task_data_revision = _required_string(source, "task_data_revision")
-        self.task_data_sha256 = _required_string(source, "task_data_sha256")
         self.container_image = _required_string(source, "container_image")
         self.container_digest = _required_string(source, "container_digest")
         self.evaluator_entrypoint = _required_string(source, "evaluator_entrypoint")
-        require_sha256(self.task_data_sha256, field_name="task_data_sha256")
         require_sha256(self.container_digest, field_name="container_digest")
         self.run_id = str(run_id)
         self.runtime_root = Path(runtime_root).expanduser().resolve()
@@ -107,25 +116,37 @@ class InterCodeBashAdapter:
 
     def load_tasks(self, *, limit: int) -> Sequence[BenchmarkTask]:
         limit = _positive_int(limit, field_name="limit")
-        if not self.task_data_path.is_file():
-            raise FileNotFoundError(
-                f"InterCode Bash task data not found: {self.task_data_path}"
+        records: list[_OfficialBashTask] = []
+        for data_path, configured_hash in self.task_data_files:
+            expected_hash = (
+                self.task_data_sha256
+                if not self.multi_file and data_path == self.task_data_path
+                else configured_hash
             )
-        actual_hash = _sha256_file(self.task_data_path)
-        if actual_hash != self.task_data_sha256:
+            if not data_path.is_file():
+                raise FileNotFoundError(
+                    f"InterCode Bash task data not found: {data_path}"
+                )
+            actual_hash = _sha256_file(data_path)
+            if actual_hash != expected_hash:
+                raise ValueError(
+                    "InterCode Bash task data hash mismatch for "
+                    f"{data_path.name}: expected {expected_hash}, got {actual_hash}"
+                )
+            source_file = data_path.name
+            for source_index, row in enumerate(_load_rows(data_path)):
+                records.append(_parse_official_task(
+                    row,
+                    source_file=source_file,
+                    source_index=source_index,
+                    global_index=len(records),
+                    namespace_task_id=self.multi_file,
+                ))
+        if limit > len(records):
             raise ValueError(
-                "InterCode Bash task data hash mismatch: "
-                f"expected {self.task_data_sha256}, got {actual_hash}"
+                f"InterCode Bash limit {limit} exceeds available task count {len(records)}"
             )
-        rows = _load_rows(self.task_data_path)
-        if limit > len(rows):
-            raise ValueError(
-                f"InterCode Bash limit {limit} exceeds available task count {len(rows)}"
-            )
-        records = tuple(
-            _parse_official_task(row, source_index=index)
-            for index, row in enumerate(rows[:limit])
-        )
+        records = records[:limit]
         self._records = {record.task_id: record for record in records}
         return tuple(
             self._benchmark_task(record, order_index=order_index)
@@ -270,16 +291,18 @@ class InterCodeBashAdapter:
     ) -> BenchmarkTask:
         return BenchmarkTask(
             benchmark="intercode_bash",
-            subset="nl2bash_fs_1",
+            subset=self.task_subset,
             task_id=record.task_id,
             order_index=order_index,
-            task_group="intercode_bash:nl2bash_fs_1",
+            task_group=f"intercode_bash:{self.task_subset}",
             instruction=record.instruction,
             split="test",
             source_revision=self.source_revision,
             content_hash=record.content_hash,
             environment_spec={
+                "source_file": record.source_file,
                 "source_index": record.source_index,
+                "global_index": record.global_index,
                 "task_data_revision": self.task_data_revision,
                 "container_image": self.container_image,
                 "container_digest": self.container_digest,
@@ -587,22 +610,66 @@ def _load_rows(path: Path) -> tuple[Mapping[str, Any], ...]:
 def _parse_official_task(
     row: Mapping[str, Any],
     *,
+    source_file: str,
     source_index: int,
+    global_index: int,
+    namespace_task_id: bool,
 ) -> _OfficialBashTask:
     instruction = _required_string(row, "query")
     gold = _gold_command_from_state(row.get("gold"))
     normalized = {
+        "source_file": source_file,
         "source_index": source_index,
+        "global_index": global_index,
         "query": instruction,
         "gold": _gold_command_json(gold),
     }
     return _OfficialBashTask(
-        task_id=str(source_index),
+        task_id=(
+            f"{Path(source_file).stem}:{source_index}"
+            if namespace_task_id
+            else str(global_index)
+        ),
+        source_file=source_file,
         source_index=source_index,
+        global_index=global_index,
         instruction=instruction,
         gold_command=gold,
         content_hash=canonical_sha256(normalized),
     )
+
+
+def _locked_task_data_files(
+    *,
+    task_data_path: str | Path | None,
+    task_data_paths: Sequence[str | Path],
+    source: Mapping[str, Any],
+) -> tuple[tuple[Path, str], ...]:
+    if task_data_paths:
+        if task_data_path is not None:
+            raise ValueError("provide either task_data_path or task_data_paths, not both")
+        raw_files = source.get("task_data_files")
+        if not isinstance(raw_files, Sequence) or isinstance(raw_files, (str, bytes)):
+            raise ValueError("multi-file InterCode source requires task_data_files")
+        if len(raw_files) != len(task_data_paths):
+            raise ValueError("task_data_paths must match locked task_data_files")
+        locked: list[tuple[Path, str]] = []
+        for index, (path, item) in enumerate(zip(task_data_paths, raw_files, strict=True)):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"task_data_files[{index}] must be an object")
+            expected_name = Path(_required_string(item, "path")).name
+            resolved = Path(path).expanduser().resolve()
+            if resolved.name != expected_name:
+                raise ValueError("task_data_paths order must match task_data_files")
+            sha256 = _required_string(item, "sha256")
+            require_sha256(sha256, field_name=f"task_data_files[{index}].sha256")
+            locked.append((resolved, sha256))
+        return tuple(locked)
+    if task_data_path is None:
+        raise ValueError("InterCode source requires task_data_path or task_data_paths")
+    sha256 = _required_string(source, "task_data_sha256")
+    require_sha256(sha256, field_name="task_data_sha256")
+    return ((Path(task_data_path).expanduser().resolve(), sha256),)
 
 
 def _gold_command_from_state(value: object) -> str | tuple[str, ...]:

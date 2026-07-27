@@ -1,5 +1,5 @@
 {
-  "schema_version": "memory-benchmark-source-lock-v1",
+  "schema_version": "memory-benchmark-source-lock-v2",
   "sources": {
     "intercode": {
       "container_base_digest": "sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb",
@@ -11,9 +11,29 @@
       "evaluator_entrypoint": "intercode.envs.BashEnv.get_reward",
       "license": "MIT",
       "revision": "c3e46d827cfc9d4c704ec078f7abf9f41e3191d8",
-      "task_data_path": "data/nl2bash/nl2bash_fs_1.json",
+      "task_data_files": [
+        {
+          "path": "data/nl2bash/nl2bash_fs_1.json",
+          "sha256": "sha256:60f88e1aacc7ebba535093f9890c5c33203f4e5f32958e0e94fbe90ec4f01c82"
+        },
+        {
+          "path": "data/nl2bash/nl2bash_fs_2.json",
+          "sha256": "sha256:8f4ce24e535fab782fda607e37db2ae1d6c5f99993c638d1ac0a7e0b542f633e"
+        },
+        {
+          "path": "data/nl2bash/nl2bash_fs_3.json",
+          "sha256": "sha256:a2d4ec8bc7ad69a4e2fb3eb84033994cf65ee9cfb355e3e63099df67a339b2e1"
+        },
+        {
+          "path": "data/nl2bash/nl2bash_fs_4.json",
+          "sha256": "sha256:ce41b89450f87765a02a51df259ca0c1762e8249185c022adb089147e2c16200"
+        },
+        {
+          "path": "data/nl2bash/test_queries.json",
+          "sha256": "sha256:d24a7a1eb61c2621c48a42f942d08f6aa02066630ab49c2a07de2530a226e0aa"
+        }
+      ],
       "task_data_revision": "c3e46d827cfc9d4c704ec078f7abf9f41e3191d8",
-      "task_data_sha256": "sha256:60f88e1aacc7ebba535093f9890c5c33203f4e5f32958e0e94fbe90ec4f01c82",
       "task_data_url": "https://github.com/princeton-nlp/intercode",
       "url": "https://github.com/princeton-nlp/intercode"
     },

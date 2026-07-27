@@ -971,11 +971,7 @@ def _build_adapter(
     suite = config.benchmarks[benchmark]
     sources = _mapping(source_lock.get("sources"), "source lock sources")
     source = _mapping(sources.get(suite.source), f"source {suite.source}")
-    data_path = checkout_roots[suite.source] / _required_string(
-        source.get("task_data_path"), "task_data_path"
-    )
     kwargs = {
-        "task_data_path": data_path,
         "source": source,
         "run_id": run_id,
         "runtime_root": runtime_root,
@@ -983,9 +979,25 @@ def _build_adapter(
         "max_output_chars": int(config.runtime["memory_tool_result_chars"]),
     }
     if benchmark == "lifelong_os":
-        return LifelongOSAdapter(**kwargs)
+        data_path = checkout_roots[suite.source] / _required_string(
+            source.get("task_data_path"), "task_data_path"
+        )
+        return LifelongOSAdapter(task_data_path=data_path, **kwargs)
     if benchmark == "intercode_bash":
-        return InterCodeBashAdapter(**kwargs)
+        raw_files = source.get("task_data_files")
+        if raw_files is None:
+            data_path = checkout_roots[suite.source] / _required_string(
+                source.get("task_data_path"), "task_data_path"
+            )
+            return InterCodeBashAdapter(task_data_path=data_path, **kwargs)
+        if not isinstance(raw_files, Sequence) or isinstance(raw_files, (str, bytes)):
+            raise ValueError("task_data_files must be an array")
+        data_paths = tuple(
+            checkout_roots[suite.source]
+            / _required_string(_mapping(item, "task data file").get("path"), "task data path")
+            for item in raw_files
+        )
+        return InterCodeBashAdapter(task_data_paths=data_paths, **kwargs)
     raise ValueError(f"unsupported memory benchmark: {benchmark}")
 
 

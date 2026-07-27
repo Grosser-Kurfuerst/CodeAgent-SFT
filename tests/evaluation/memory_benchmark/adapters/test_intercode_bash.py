@@ -91,6 +91,20 @@ def _source(path: Path) -> dict[str, str]:
     }
 
 
+def _multi_source(paths: tuple[Path, ...]) -> dict[str, Any]:
+    return {
+        "revision": SOURCE_REVISION,
+        "task_data_revision": DATA_REVISION,
+        "task_data_files": [
+            {"path": f"data/nl2bash/{path.name}", "sha256": _sha256_file(path)}
+            for path in paths
+        ],
+        "container_image": "intercode-nl2bash:locked",
+        "container_digest": IMAGE_DIGEST,
+        "evaluator_entrypoint": "intercode.envs.BashEnv.get_reward",
+    }
+
+
 def _adapter(
     tmp_path: Path,
     *,
@@ -144,6 +158,85 @@ def test_intercode_limit_returns_exact_first_forty_tasks(tmp_path: Path) -> None
     assert len(tasks) == 40
     assert [task.task_id for task in tasks] == [str(index) for index in range(40)]
     assert [task.order_index for task in tasks] == list(range(1, 41))
+
+
+def test_intercode_multi_file_suite_preserves_locked_order_and_unique_ids(
+    tmp_path: Path,
+) -> None:
+    counts = (60, 53, 60, 27, 24)
+    names = (
+        "nl2bash_fs_1.json",
+        "nl2bash_fs_2.json",
+        "nl2bash_fs_3.json",
+        "nl2bash_fs_4.json",
+        "test_queries.json",
+    )
+    paths: list[Path] = []
+    offset = 0
+    for name, count in zip(names, counts, strict=True):
+        path = tmp_path / name
+        path.write_text(
+            json.dumps([_row(offset + index) for index in range(count)]),
+            encoding="utf-8",
+        )
+        paths.append(path)
+        offset += count
+    locked_paths = tuple(paths)
+    adapter = InterCodeBashAdapter(
+        task_data_paths=locked_paths,
+        source=_multi_source(locked_paths),
+        run_id="run-1",
+        runtime_root=tmp_path / "runtime",
+        docker_runtime=_FakeDockerRuntime(),
+    )
+
+    tasks = tuple(adapter.load_tasks(limit=224))
+
+    assert len(tasks) == 224
+    assert len({task.task_id for task in tasks}) == 224
+    assert [
+        tasks[index].task_id for index in (0, 59, 60, 112, 113, 172, 173, 199, 200, 223)
+    ] == [
+        "nl2bash_fs_1:0",
+        "nl2bash_fs_1:59",
+        "nl2bash_fs_2:0",
+        "nl2bash_fs_2:52",
+        "nl2bash_fs_3:0",
+        "nl2bash_fs_3:59",
+        "nl2bash_fs_4:0",
+        "nl2bash_fs_4:26",
+        "test_queries:0",
+        "test_queries:23",
+    ]
+    assert [task.order_index for task in tasks] == list(range(1, 225))
+    assert {task.subset for task in tasks} == {"nl2bash_all"}
+    assert {task.task_group for task in tasks} == {"intercode_bash:nl2bash_all"}
+    assert tasks[60].environment_spec["source_file"] == "nl2bash_fs_2.json"
+    assert tasks[60].environment_spec["source_index"] == 0
+    assert tasks[60].environment_spec["global_index"] == 60
+
+    with pytest.raises(ValueError, match="exceeds available task count 224"):
+        adapter.load_tasks(limit=225)
+
+
+def test_intercode_multi_file_rejects_hash_mismatch(tmp_path: Path) -> None:
+    first = tmp_path / "nl2bash_fs_1.json"
+    second = tmp_path / "nl2bash_fs_2.json"
+    first.write_text(json.dumps([_row(0)]), encoding="utf-8")
+    second.write_text(json.dumps([_row(1)]), encoding="utf-8")
+    paths = (first, second)
+    source = _multi_source(paths)
+    source["task_data_files"][1]["sha256"] = canonical_sha256("different")
+    adapter = InterCodeBashAdapter(
+        task_data_paths=paths,
+        source=source,
+        run_id="run-1",
+        runtime_root=tmp_path / "runtime",
+        docker_runtime=_FakeDockerRuntime(),
+    )
+
+    with pytest.raises(ValueError, match="nl2bash_fs_2.json"):
+        adapter.load_tasks(limit=2)
 
 
 def test_intercode_rejects_task_data_hash_mismatch(tmp_path: Path) -> None:
