@@ -91,12 +91,16 @@ def _adapter(
     *,
     data_path: Path = FIXTURE,
     runtime: _FakeDockerRuntime | None = None,
+    command_timeout_seconds: int = 120,
+    evaluator_command_timeout_seconds: int = 300,
 ) -> LifelongOSAdapter:
     return LifelongOSAdapter(
         task_data_path=data_path,
         source=_source(data_path),
         run_id="run-1",
         runtime_root=tmp_path / "runtime",
+        command_timeout_seconds=command_timeout_seconds,
+        evaluator_command_timeout_seconds=evaluator_command_timeout_seconds,
         docker_runtime=runtime or _FakeDockerRuntime(),
     )
 
@@ -249,6 +253,55 @@ def test_lifelong_os_prepare_initializes_scores_and_cleans_container(
     assert shell_flags == ["-c", "-c"]
     adapter.cleanup_task(prepared)
     assert len(runtime.cleaned) == 1
+
+
+def test_lifelong_os_uses_short_initialization_and_long_evaluator_timeout(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        command_timeout_seconds=17,
+        evaluator_command_timeout_seconds=29,
+    )
+    task = adapter.load_tasks(limit=1)[0]
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    prepared = adapter.prepare_task(task, task_dir=task_dir, seed=42)
+    state = json.loads(prepared.adapter_state_path.read_text(encoding="utf-8"))
+    timeouts: list[int] = []
+
+    def command_runner(
+        argv: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        timeouts.append(int(kwargs["timeout"]))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    assert state["command_timeout_seconds"] == 17
+    assert state["evaluator_command_timeout_seconds"] == 29
+    assert adapter.evaluator_hash != _adapter(
+        tmp_path / "changed-timeout",
+        command_timeout_seconds=17,
+        evaluator_command_timeout_seconds=30,
+    ).evaluator_hash
+    assert lifelong_os_cli_main(
+        ["initialize", "--state", str(prepared.adapter_state_path)],
+        command_runner=command_runner,
+    ) == 0
+    assert timeouts == [17]
+
+    timeouts.clear()
+    assert lifelong_os_cli_main(
+        [
+            "score",
+            "--state",
+            str(prepared.adapter_state_path),
+            "--result",
+            str(prepared.official_result_path),
+        ],
+        command_runner=command_runner,
+    ) == 0
+    assert timeouts == [29]
+    adapter.cleanup_task(prepared)
 
 
 def test_lifelong_os_legal_failure_and_scorer_error_are_distinct(tmp_path: Path) -> None:

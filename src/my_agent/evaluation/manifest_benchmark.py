@@ -1052,6 +1052,7 @@ def _run_external_state_task(
     ):
         raise ValueError("external_state tasks must not expose an agent test command")
     evaluator_name, evaluator_version, evaluator_hash = _external_evaluator_identity(task)
+    hidden_timeout = _external_hidden_timeout_seconds(task, default=command_timeout)
     official_result_path = _external_official_result_path(task, manifest_path=manifest_path)
     initial_visible = CommandResult(
         command="",
@@ -1128,7 +1129,7 @@ def _run_external_state_task(
                 raw_final_hidden = run_test_command(
                     hidden_command,
                     cwd=work_repo,
-                    timeout=command_timeout,
+                    timeout=hidden_timeout,
                     env=command_env,
                 )
                 final_hidden = _without_command_output(raw_final_hidden)
@@ -1330,7 +1331,9 @@ def run_test_command(
             elapsed_sec=time.monotonic() - started,
         )
     except subprocess.TimeoutExpired as exc:
-        output = ((exc.stdout or "") + "\n" + (exc.stderr or "")).strip()
+        stdout = _subprocess_output_text(exc.stdout)
+        stderr = _subprocess_output_text(exc.stderr)
+        output = (stdout + "\n" + stderr).strip()
         return CommandResult(
             command=_command_label(command),
             ok=False,
@@ -1346,6 +1349,14 @@ def run_test_command(
             output=f"Command not found: {exc}",
             elapsed_sec=time.monotonic() - started,
         )
+
+
+def _subprocess_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def _required_external_command(value: object, *, field_name: str) -> str | Sequence[str]:
@@ -1368,6 +1379,17 @@ def _external_evaluator_identity(task: Mapping[str, Any]) -> tuple[str, str, str
         raise ValueError("external_state task requires evaluator_name and evaluator_version")
     require_sha256(evaluator_hash, field_name="external_state evaluator_hash")
     return evaluator_name, evaluator_version, evaluator_hash
+
+
+def _external_hidden_timeout_seconds(
+    task: Mapping[str, Any],
+    *,
+    default: int,
+) -> int:
+    value = task.get("hidden_test_timeout_seconds", default)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("external_state hidden_test_timeout_seconds must be positive")
+    return value
 
 
 def _external_official_result_path(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -739,6 +740,62 @@ class ManifestBenchmarkTests(unittest.TestCase):
         self.assertEqual(item.official_result_path, str(official_path))
         self.assertEqual(item.final_hidden.output, "")
         self.assertNotIn("hidden evaluator output", trace_payload)
+
+    def test_external_state_uses_task_specific_hidden_evaluator_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = base / "repo"
+            write_repo(repo, value=0)
+            task, _, events_path = external_task(base, repo)
+            task["hidden_test_timeout_seconds"] = 45
+            manifest = base / "external.json"
+            manifest.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            timeouts: list[int] = []
+            original = manifest_benchmark_module.run_test_command
+
+            def recording_run_test_command(*args: object, **kwargs: object) -> CommandResult:
+                timeouts.append(int(kwargs["timeout"]))
+                return original(*args, **kwargs)  # type: ignore[arg-type]
+
+            with patch.object(
+                manifest_benchmark_module,
+                "run_test_command",
+                side_effect=recording_run_test_command,
+            ):
+                run_manifest_benchmark(
+                    tasks_path=manifest,
+                    output_dir=base / "out",
+                    config=fake_config(base / "traces"),
+                    agent_runner=external_agent_runner(events_path),
+                )
+
+        self.assertEqual(timeouts, [20, 45])
+
+    def test_run_test_command_decodes_timeout_bytes(self) -> None:
+        timeout = subprocess.TimeoutExpired(
+            cmd=["fixture"],
+            timeout=1,
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(
+                manifest_benchmark_module.subprocess,
+                "run",
+                side_effect=timeout,
+            ),
+        ):
+            result = manifest_benchmark_module.run_test_command(
+                ["fixture"],
+                cwd=Path(tmp),
+                timeout=1,
+                env={},
+            )
+
+        self.assertEqual(result.returncode, 124)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.output, "partial stdout\npartial stderr")
 
     def test_external_environment_failure_skips_agent_and_evaluator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

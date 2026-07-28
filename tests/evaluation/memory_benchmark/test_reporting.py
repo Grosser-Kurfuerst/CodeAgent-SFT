@@ -87,6 +87,8 @@ def _write_fake_run(root: Path) -> Path:
         memory_tool_result_chars=4000,
         max_steps=40,
         command_timeout=120,
+        evaluator_command_timeout=300,
+        evaluator_process_timeout=360,
         actor_temperature=1.0,
         memory_generation_temperature=1.0,
         memory_generation_top_p=0.95,

@@ -33,7 +33,7 @@ from my_agent.evaluation.memory_benchmark.contracts import (
 from my_agent.policy.identity import canonical_json_bytes, canonical_sha256, require_sha256
 
 
-INTERCODE_BASH_SCHEMA_VERSION = "memory-benchmark-intercode-bash-v1"
+INTERCODE_BASH_SCHEMA_VERSION = "memory-benchmark-intercode-bash-v2"
 INTERCODE_BASH_EVALUATOR_NAME = "intercode-bash"
 
 _GIT_RESET_SCRIPT = "git reset --hard; git clean -fd;"
@@ -66,6 +66,7 @@ class InterCodeBashAdapter:
         run_id: str,
         runtime_root: str | Path,
         command_timeout_seconds: int = 120,
+        evaluator_command_timeout_seconds: int = 300,
         max_output_chars: int = 4_000,
         docker_runtime: DockerRuntime | None = None,
     ) -> None:
@@ -92,6 +93,14 @@ class InterCodeBashAdapter:
             command_timeout_seconds,
             field_name="command_timeout_seconds",
         )
+        self.evaluator_command_timeout_seconds = _positive_int(
+            evaluator_command_timeout_seconds,
+            field_name="evaluator_command_timeout_seconds",
+        )
+        if self.evaluator_command_timeout_seconds <= self.command_timeout_seconds:
+            raise ValueError(
+                "evaluator_command_timeout_seconds must exceed command_timeout_seconds"
+            )
         self.max_output_chars = _positive_int(
             max_output_chars,
             field_name="max_output_chars",
@@ -102,6 +111,9 @@ class InterCodeBashAdapter:
                 "schema_version": INTERCODE_BASH_SCHEMA_VERSION,
                 "source_revision": self.source_revision,
                 "entrypoint": self.evaluator_entrypoint,
+                "evaluator_command_timeout_seconds": (
+                    self.evaluator_command_timeout_seconds
+                ),
                 "reward": {
                     "base": 0.01,
                     "file_system_diff": 0.33,
@@ -220,6 +232,9 @@ class InterCodeBashAdapter:
                     "gold_command": _gold_command_json(record.gold_command),
                     "runtime_action_log_path": str(runtime_log),
                     "command_timeout_seconds": self.command_timeout_seconds,
+                    "evaluator_command_timeout_seconds": (
+                        self.evaluator_command_timeout_seconds
+                    ),
                     "evaluator_max_output_chars": _EVALUATOR_MAX_OUTPUT_CHARS,
                 },
             )
@@ -342,6 +357,7 @@ def intercode_bash_cli_main(
                 _GIT_RESET_SCRIPT,
                 state=state,
                 command_runner=command_runner,
+                timeout_field="command_timeout_seconds",
             )
         except (FileNotFoundError, OSError, RuntimeError, ValueError):
             return 2
@@ -466,6 +482,7 @@ def _execute_hidden_command(
     *,
     state: Mapping[str, Any],
     command_runner: Callable[..., Any] | None,
+    timeout_field: str = "evaluator_command_timeout_seconds",
 ) -> DockerActionResult:
     kwargs: dict[str, Any] = {}
     if command_runner is not None:
@@ -473,7 +490,7 @@ def _execute_hidden_command(
     return execute_container_command(
         container_name,
         command,
-        timeout_seconds=int(state["command_timeout_seconds"]),
+        timeout_seconds=int(state[timeout_field]),
         max_output_chars=int(state["evaluator_max_output_chars"]),
         login_shell=False,
         **kwargs,
@@ -552,10 +569,11 @@ def _load_adapter_state(path: Path) -> Mapping[str, Any]:
         "gold_command",
         "runtime_action_log_path",
         "command_timeout_seconds",
+        "evaluator_command_timeout_seconds",
         "evaluator_max_output_chars",
     }
     if not isinstance(payload, Mapping) or set(payload) != expected_fields:
-        raise ValueError("InterCode Bash adapter state does not match the v1 schema")
+        raise ValueError("InterCode Bash adapter state does not match the v2 schema")
     if payload.get("schema_version") != INTERCODE_BASH_SCHEMA_VERSION:
         raise ValueError("unsupported InterCode Bash adapter state schema")
     for field_name in (
@@ -572,10 +590,18 @@ def _load_adapter_state(path: Path) -> Mapping[str, Any]:
     if not runtime_log.is_absolute():
         raise ValueError("runtime_action_log_path must be absolute")
     _gold_command_from_state(payload["gold_command"])
-    _positive_int(
+    command_timeout = _positive_int(
         payload["command_timeout_seconds"],
         field_name="command_timeout_seconds",
     )
+    evaluator_timeout = _positive_int(
+        payload["evaluator_command_timeout_seconds"],
+        field_name="evaluator_command_timeout_seconds",
+    )
+    if evaluator_timeout <= command_timeout:
+        raise ValueError(
+            "evaluator_command_timeout_seconds must exceed command_timeout_seconds"
+        )
     _positive_int(
         payload["evaluator_max_output_chars"],
         field_name="evaluator_max_output_chars",

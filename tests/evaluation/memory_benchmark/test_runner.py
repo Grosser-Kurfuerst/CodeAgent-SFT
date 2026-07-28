@@ -472,6 +472,7 @@ def _run(
     tasks: list[BenchmarkTask] | None = None,
     progress: Callable[[str], None] | None = None,
     retry_sleeper: Callable[[float], None] = _no_retry_sleep,
+    evaluator_process_timeout: int | None = None,
 ):
     output = tmp_path / "stream"
     return run_memory_benchmark_stream(
@@ -488,9 +489,34 @@ def _run(
         actor_identity_hash=HASH,
         tools_hash=HASH,
         backend_config_hash=HASH,
+        evaluator_process_timeout=evaluator_process_timeout,
         manifest_runner=manifest_runner,
         progress=progress,
         retry_sleeper=retry_sleeper,
+    )
+
+
+def test_stream_locks_hidden_evaluator_process_timeout_in_derived_manifest(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeAdapter()
+    manifest_runner = FakeManifestRunner(formal=False)
+    output = tmp_path / "stream"
+
+    _run(
+        tmp_path,
+        backend=NoMemoryBackend(
+            stream_memory_dir=output / "memory",
+            stream_project_key=_project_key("no_memory"),
+        ),
+        adapter=adapter,
+        manifest_runner=manifest_runner,
+        evaluator_process_timeout=360,
+    )
+
+    assert all(
+        call["payload"]["tasks"][0]["hidden_test_timeout_seconds"] == 360
+        for call in manifest_runner.calls
     )
 
 

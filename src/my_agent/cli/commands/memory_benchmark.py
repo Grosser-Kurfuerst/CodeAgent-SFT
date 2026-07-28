@@ -403,6 +403,12 @@ def preflight_memory_benchmark(
         memory_tool_result_chars=int(config.runtime["memory_tool_result_chars"]),
         max_steps=int(config.runtime["max_steps"]),
         command_timeout=int(config.runtime["command_timeout_seconds"]),
+        evaluator_command_timeout=int(
+            config.runtime["evaluator_command_timeout_seconds"]
+        ),
+        evaluator_process_timeout=int(
+            config.runtime["evaluator_process_timeout_seconds"]
+        ),
         actor_temperature=float(config.runtime["actor_temperature"]),
         memory_generation_temperature=float(config.memory["generation_temperature"]),
         memory_generation_top_p=float(config.memory["generation_top_p"]),
@@ -674,6 +680,7 @@ def run_preflighted_memory_benchmark(
                     ),
                     max_steps=protocol.max_steps,
                     command_timeout=protocol.command_timeout,
+                    evaluator_process_timeout=protocol.evaluator_process_timeout,
                     progress=progress,
                 )
             except Exception as exc:
@@ -976,6 +983,9 @@ def _build_adapter(
         "run_id": run_id,
         "runtime_root": runtime_root,
         "command_timeout_seconds": int(config.runtime["command_timeout_seconds"]),
+        "evaluator_command_timeout_seconds": int(
+            config.runtime["evaluator_command_timeout_seconds"]
+        ),
         "max_output_chars": int(config.runtime["memory_tool_result_chars"]),
     }
     if benchmark == "lifelong_os":

@@ -493,6 +493,7 @@ def test_run_allows_existing_stream_and_rejects_selection_drift(tmp_path: Path) 
     assert len({call["protocol_hash"] for call in calls}) == 1
     assert all(call["max_steps"] == 40 for call in calls)
     assert all(call["command_timeout"] == 120 for call in calls)
+    assert all(call["evaluator_process_timeout"] == 360 for call in calls)
     assert progress[0].startswith(
         "stream 1/3 seed=42 arm=agentcli_four_tier benchmark=intercode_bash tasks=1 started"
     )

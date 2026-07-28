@@ -19,7 +19,7 @@ from my_agent.policy.identity import (
 
 
 MEMORY_BENCHMARK_CONFIG_SCHEMA_VERSION = "memory-benchmark-config-v2"
-MEMORY_BENCHMARK_PROTOCOL_SCHEMA_VERSION = "memory-benchmark-protocol-v1"
+MEMORY_BENCHMARK_PROTOCOL_SCHEMA_VERSION = "memory-benchmark-protocol-v2"
 
 REQUIRED_ENVIRONMENT_VARIABLES = {
     "lifelong_agent_bench_root": "AGENTCLI_LIFELONG_AGENT_BENCH_ROOT",
@@ -264,6 +264,8 @@ class MemoryBenchmarkProtocol:
     memory_tool_result_chars: int
     max_steps: int
     command_timeout: int
+    evaluator_command_timeout: int
+    evaluator_process_timeout: int
     actor_temperature: float
     memory_generation_temperature: float
     memory_generation_top_p: float
@@ -345,11 +347,19 @@ class MemoryBenchmarkProtocol:
             "memory_tool_result_chars",
             "max_steps",
             "command_timeout",
+            "evaluator_command_timeout",
+            "evaluator_process_timeout",
             "selected_max_items",
             "selected_content_max_tokens",
             "maintenance_interval_tasks",
         ):
             _require_positive_int(getattr(self, field_name), field_name=field_name)
+        if self.evaluator_command_timeout <= self.command_timeout:
+            raise ValueError("evaluator_command_timeout must exceed command_timeout")
+        if self.evaluator_process_timeout <= self.evaluator_command_timeout:
+            raise ValueError(
+                "evaluator_process_timeout must exceed evaluator_command_timeout"
+            )
         if self.selected_max_items > 20:
             raise ValueError("selected_max_items cannot exceed 20")
         if self.selected_content_max_tokens > 1800:
@@ -413,6 +423,8 @@ class MemoryBenchmarkProtocol:
             "memory_tool_result_chars": self.memory_tool_result_chars,
             "max_steps": self.max_steps,
             "command_timeout": self.command_timeout,
+            "evaluator_command_timeout": self.evaluator_command_timeout,
+            "evaluator_process_timeout": self.evaluator_process_timeout,
             "actor_temperature": self.actor_temperature,
             "memory_generation_temperature": self.memory_generation_temperature,
             "memory_generation_top_p": self.memory_generation_top_p,
@@ -518,6 +530,14 @@ class MemoryBenchmarkProtocol:
             command_timeout=_required_int(
                 data.get("command_timeout"), field_name="command_timeout"
             ),
+            evaluator_command_timeout=_required_int(
+                data.get("evaluator_command_timeout"),
+                field_name="evaluator_command_timeout",
+            ),
+            evaluator_process_timeout=_required_int(
+                data.get("evaluator_process_timeout"),
+                field_name="evaluator_process_timeout",
+            ),
             actor_temperature=_required_float(
                 data.get("actor_temperature"), field_name="actor_temperature"
             ),
@@ -584,8 +604,23 @@ def _validate_runtime_config(runtime: Mapping[str, Any]) -> None:
         "memory_tool_result_chars",
         "max_steps",
         "command_timeout_seconds",
+        "evaluator_command_timeout_seconds",
+        "evaluator_process_timeout_seconds",
     ):
         _require_positive_int(runtime.get(field_name), field_name=f"runtime.{field_name}")
+    if runtime["evaluator_command_timeout_seconds"] <= runtime["command_timeout_seconds"]:
+        raise ValueError(
+            "runtime.evaluator_command_timeout_seconds must exceed "
+            "runtime.command_timeout_seconds"
+        )
+    if (
+        runtime["evaluator_process_timeout_seconds"]
+        <= runtime["evaluator_command_timeout_seconds"]
+    ):
+        raise ValueError(
+            "runtime.evaluator_process_timeout_seconds must exceed "
+            "runtime.evaluator_command_timeout_seconds"
+        )
     if runtime.get("agent_mode") != "react":
         raise ValueError("runtime.agent_mode must be 'react'")
     temperature = _required_float(

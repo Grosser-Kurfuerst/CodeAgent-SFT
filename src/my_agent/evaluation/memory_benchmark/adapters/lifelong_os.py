@@ -31,7 +31,7 @@ from my_agent.evaluation.memory_benchmark.contracts import (
 from my_agent.policy.identity import canonical_json_bytes, canonical_sha256, require_sha256
 
 
-LIFELONG_OS_SCHEMA_VERSION = "memory-benchmark-lifelong-os-v1"
+LIFELONG_OS_SCHEMA_VERSION = "memory-benchmark-lifelong-os-v2"
 LIFELONG_OS_EVALUATOR_NAME = "lifelong-agent-bench-os"
 
 
@@ -59,6 +59,7 @@ class LifelongOSAdapter:
         run_id: str,
         runtime_root: str | Path,
         command_timeout_seconds: int = 120,
+        evaluator_command_timeout_seconds: int = 300,
         max_output_chars: int = 4_000,
         docker_runtime: DockerRuntime | None = None,
     ) -> None:
@@ -79,6 +80,14 @@ class LifelongOSAdapter:
             command_timeout_seconds,
             field_name="command_timeout_seconds",
         )
+        self.evaluator_command_timeout_seconds = _positive_int(
+            evaluator_command_timeout_seconds,
+            field_name="evaluator_command_timeout_seconds",
+        )
+        if self.evaluator_command_timeout_seconds <= self.command_timeout_seconds:
+            raise ValueError(
+                "evaluator_command_timeout_seconds must exceed command_timeout_seconds"
+            )
         self.max_output_chars = _positive_int(
             max_output_chars,
             field_name="max_output_chars",
@@ -89,6 +98,9 @@ class LifelongOSAdapter:
                 "schema_version": LIFELONG_OS_SCHEMA_VERSION,
                 "source_revision": self.source_revision,
                 "entrypoint": self.evaluator_entrypoint,
+                "evaluator_command_timeout_seconds": (
+                    self.evaluator_command_timeout_seconds
+                ),
                 "semantics": "execute evaluation_command_item and resolve on exit code 0",
             }
         )
@@ -173,6 +185,9 @@ class LifelongOSAdapter:
                     "initialization_script": record.initialization_script,
                     "evaluation_script": record.evaluation_script,
                     "command_timeout_seconds": self.command_timeout_seconds,
+                    "evaluator_command_timeout_seconds": (
+                        self.evaluator_command_timeout_seconds
+                    ),
                     "max_output_chars": self.max_output_chars,
                 },
             )
@@ -321,7 +336,7 @@ def _score_lifelong_os(
     result = execute_container_command(
         str(state["container_name"]),
         str(state["evaluation_script"]),
-        timeout_seconds=int(state["command_timeout_seconds"]),
+        timeout_seconds=int(state["evaluator_command_timeout_seconds"]),
         max_output_chars=int(state["max_output_chars"]),
         login_shell=False,
         **runner_kwargs,
@@ -350,10 +365,11 @@ def _load_adapter_state(path: Path) -> Mapping[str, Any]:
         "initialization_script",
         "evaluation_script",
         "command_timeout_seconds",
+        "evaluator_command_timeout_seconds",
         "max_output_chars",
     }
     if not isinstance(payload, Mapping) or set(payload) != expected_fields:
-        raise ValueError("Lifelong OS adapter state does not match the v1 schema")
+        raise ValueError("Lifelong OS adapter state does not match the v2 schema")
     if payload.get("schema_version") != LIFELONG_OS_SCHEMA_VERSION:
         raise ValueError("unsupported Lifelong OS adapter state schema")
     for field_name in (
@@ -366,7 +382,18 @@ def _load_adapter_state(path: Path) -> Mapping[str, Any]:
     if not isinstance(payload.get("initialization_script"), str):
         raise ValueError("initialization_script must be a string")
     require_sha256(str(payload["evaluator_hash"]), field_name="evaluator_hash")
-    _positive_int(payload["command_timeout_seconds"], field_name="command_timeout_seconds")
+    command_timeout = _positive_int(
+        payload["command_timeout_seconds"],
+        field_name="command_timeout_seconds",
+    )
+    evaluator_timeout = _positive_int(
+        payload["evaluator_command_timeout_seconds"],
+        field_name="evaluator_command_timeout_seconds",
+    )
+    if evaluator_timeout <= command_timeout:
+        raise ValueError(
+            "evaluator_command_timeout_seconds must exceed command_timeout_seconds"
+        )
     _positive_int(payload["max_output_chars"], field_name="max_output_chars")
     return payload
 

@@ -41,6 +41,8 @@
     "agent_mode": "react",
     "max_steps": 40,
     "command_timeout_seconds": 120,
+    "evaluator_command_timeout_seconds": 300,
+    "evaluator_process_timeout_seconds": 360,
     "actor_temperature": 1.0
   },
   "embedding": {

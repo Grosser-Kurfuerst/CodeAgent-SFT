@@ -122,6 +122,7 @@ def run_memory_benchmark_stream(
     actor_sampling_seed_effective: int | None = None,
     max_steps: int | None = None,
     command_timeout: int | None = None,
+    evaluator_process_timeout: int | None = None,
     manifest_runner: ManifestRunnerFn = run_manifest_benchmark,
     progress: ProgressReporterFn | None = None,
     retry_sleeper: RetrySleeperFn = sleep,
@@ -147,6 +148,12 @@ def run_memory_benchmark_stream(
         raise ValueError("actor_sampling_seed_effective must be a non-negative integer")
     if not actor_sampling_seed_supported and actor_sampling_seed_effective is not None:
         raise ValueError("unsupported actor sampling seed cannot be effective")
+    if evaluator_process_timeout is not None and (
+        isinstance(evaluator_process_timeout, bool)
+        or not isinstance(evaluator_process_timeout, int)
+        or evaluator_process_timeout <= 0
+    ):
+        raise ValueError("evaluator_process_timeout must be a positive integer")
     stream_dir = Path(output_dir).expanduser().resolve()
     memory_dir = Path(stream_memory_dir).expanduser().resolve()
     if memory_dir != stream_dir / "memory":
@@ -279,6 +286,7 @@ def run_memory_benchmark_stream(
                         actor_sampling_seed_effective=actor_sampling_seed_effective,
                         max_steps=max_steps,
                         command_timeout=command_timeout,
+                        evaluator_process_timeout=evaluator_process_timeout,
                         manifest_runner=manifest_runner,
                     )
                 except MemoryBenchmarkInfrastructureError as exc:
@@ -404,6 +412,7 @@ def _execute_prepared_task(
     actor_sampling_seed_effective: int | None,
     max_steps: int | None,
     command_timeout: int | None,
+    evaluator_process_timeout: int | None,
     manifest_runner: ManifestRunnerFn,
 ) -> MemoryBenchmarkTaskExecution:
     task = expected_task
@@ -434,6 +443,7 @@ def _execute_prepared_task(
                 stream_memory_dir=stream_memory_dir,
                 stream_project_key=stream_project_key,
                 protocol_hash=protocol_hash,
+                evaluator_process_timeout=evaluator_process_timeout,
             ),
         )
         try:
@@ -527,6 +537,7 @@ def _derived_manifest_payload(
     stream_memory_dir: Path,
     stream_project_key: str,
     protocol_hash: str,
+    evaluator_process_timeout: int | None,
 ) -> dict[str, Any]:
     task = prepared.task
     evaluator_name = _required_spec_string(task.evaluator_spec, "name")
@@ -540,30 +551,31 @@ def _derived_manifest_payload(
             "AGENTCLI_MEMORY_PROJECT_KEY": stream_project_key,
         }
     )
+    task_payload: dict[str, Any] = {
+        "id": task.task_id,
+        "task_group": task.task_group,
+        "source": task.benchmark,
+        "repo": str(prepared.repo_path.resolve()),
+        "task": prepared.public_prompt,
+        "evaluation_kind": "external_state",
+        "initial_environment_command": list(prepared.initial_environment_command),
+        "agent_test_command": None,
+        "hidden_test_command": list(prepared.hidden_evaluator_command),
+        "official_result_path": str(prepared.official_result_path.resolve()),
+        "evaluator_name": evaluator_name,
+        "evaluator_version": evaluator_version,
+        "evaluator_hash": evaluator_hash,
+        "env_overrides": env_overrides,
+        "tags": list(task.tags),
+        "split": task.split,
+        "protocol_hash": protocol_hash,
+    }
+    if evaluator_process_timeout is not None:
+        task_payload["hidden_test_timeout_seconds"] = evaluator_process_timeout
     return {
         "memory_mode": "shared_stream",
         "stream_id": f"{task.benchmark}:{task.subset}",
-        "tasks": [
-            {
-                "id": task.task_id,
-                "task_group": task.task_group,
-                "source": task.benchmark,
-                "repo": str(prepared.repo_path.resolve()),
-                "task": prepared.public_prompt,
-                "evaluation_kind": "external_state",
-                "initial_environment_command": list(prepared.initial_environment_command),
-                "agent_test_command": None,
-                "hidden_test_command": list(prepared.hidden_evaluator_command),
-                "official_result_path": str(prepared.official_result_path.resolve()),
-                "evaluator_name": evaluator_name,
-                "evaluator_version": evaluator_version,
-                "evaluator_hash": evaluator_hash,
-                "env_overrides": env_overrides,
-                "tags": list(task.tags),
-                "split": task.split,
-                "protocol_hash": protocol_hash,
-            }
-        ],
+        "tasks": [task_payload],
     }
 
 

@@ -66,6 +66,8 @@ def _protocol() -> MemoryBenchmarkProtocol:
         memory_tool_result_chars=4000,
         max_steps=40,
         command_timeout=120,
+        evaluator_command_timeout=300,
+        evaluator_process_timeout=360,
         actor_temperature=1.0,
         memory_generation_temperature=1.0,
         memory_generation_top_p=0.95,
@@ -127,6 +129,19 @@ def test_task_manifest_hash_changes_protocol_hash() -> None:
     )
 
     assert changed.protocol_hash != protocol.protocol_hash
+
+
+def test_evaluator_timeouts_change_protocol_hash_and_must_be_layered() -> None:
+    protocol = _protocol()
+
+    assert (
+        replace(protocol, evaluator_process_timeout=361).protocol_hash
+        != protocol.protocol_hash
+    )
+    with pytest.raises(ValueError, match="evaluator_command_timeout"):
+        replace(protocol, evaluator_command_timeout=120)
+    with pytest.raises(ValueError, match="evaluator_process_timeout"):
+        replace(protocol, evaluator_process_timeout=300)
 
 
 def test_enabled_arm_set_and_backend_config_change_protocol_hash() -> None:
@@ -200,6 +215,14 @@ def test_config_rejects_invalid_budget() -> None:
     payload["memory"]["selected_content_max_tokens"] = 1801
 
     with pytest.raises(ValueError, match="1800"):
+        MemoryBenchmarkConfig.from_dict(payload)
+
+
+def test_config_rejects_competing_evaluator_timeouts() -> None:
+    payload = load_memory_benchmark_config(CONFIG_PATH).to_dict()
+    payload["runtime"]["evaluator_process_timeout_seconds"] = 300
+
+    with pytest.raises(ValueError, match="evaluator_process_timeout_seconds"):
         MemoryBenchmarkConfig.from_dict(payload)
 
 
