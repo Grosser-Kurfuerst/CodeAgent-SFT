@@ -366,16 +366,23 @@ def benchmark_action_tools_hash() -> str:
     )
 
 
-def write_benchmark_action_files(repo_path: str | Path, state: BenchmarkActionState) -> None:
+def write_benchmark_action_files(
+    repo_path: str | Path,
+    state: BenchmarkActionState,
+    *,
+    agent_instructions: str = BENCHMARK_AGENT_INSTRUCTIONS,
+) -> None:
     repo = Path(repo_path).expanduser().resolve()
     if not repo.is_dir():
         raise ValueError(f"benchmark task repo does not exist: {repo}")
     if state.runtime_action_log_path.is_relative_to(repo):
         raise ValueError("runtime_action_log_path must be outside the benchmark task repo")
+    if not isinstance(agent_instructions, str) or not agent_instructions.strip():
+        raise ValueError("benchmark agent instructions must be non-empty")
     agentcli_dir = repo / ".agentcli"
     agentcli_dir.mkdir(parents=True, exist_ok=True)
     _write_bytes_atomic(repo / "benchmark_action.py", BENCHMARK_ACTION_SCRIPT.encode("utf-8"))
-    _write_bytes_atomic(repo / "AGENT.md", BENCHMARK_AGENT_INSTRUCTIONS.encode("utf-8"))
+    _write_bytes_atomic(repo / "AGENT.md", agent_instructions.encode("utf-8"))
     _write_bytes_atomic(
         agentcli_dir / "tools.json",
         canonical_json_bytes(benchmark_action_tool_config()) + b"\n",

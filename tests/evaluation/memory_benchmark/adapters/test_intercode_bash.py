@@ -21,6 +21,7 @@ from my_agent.evaluation.memory_benchmark.adapters.docker_runtime import (
     benchmark_container_name,
 )
 from my_agent.evaluation.memory_benchmark.adapters.intercode_bash import (
+    INTERCODE_BASH_AGENT_INSTRUCTIONS,
     INTERCODE_BASH_EVALUATOR_NAME,
     InterCodeBashAdapter,
     intercode_bash_cli_main,
@@ -275,6 +276,9 @@ def test_intercode_prepare_keeps_gold_hidden_and_creates_two_containers(
         "/testbed",
     ]
     assert task.environment_spec["working_directory"] == "/testbed"
+    assert (prepared.repo_path / "AGENT.md").read_text(
+        encoding="utf-8"
+    ) == INTERCODE_BASH_AGENT_INSTRUCTIONS
 
     adapter.cleanup_task(prepared)
     assert len(runtime.cleaned) == 2

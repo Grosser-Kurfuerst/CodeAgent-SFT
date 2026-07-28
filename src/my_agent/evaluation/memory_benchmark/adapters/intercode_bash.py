@@ -16,6 +16,7 @@ import sys
 from my_agent.evaluation.memory_benchmark.adapters.base import execute_official_scorer
 from my_agent.evaluation.memory_benchmark.adapters.docker_runtime import (
     ACTION_LOG_SCHEMA_VERSION,
+    BENCHMARK_AGENT_INSTRUCTIONS,
     BenchmarkActionState,
     DockerActionResult,
     DockerContainer,
@@ -35,6 +36,17 @@ from my_agent.policy.identity import canonical_json_bytes, canonical_sha256, req
 
 INTERCODE_BASH_SCHEMA_VERSION = "memory-benchmark-intercode-bash-v2"
 INTERCODE_BASH_EVALUATOR_NAME = "intercode-bash"
+INTERCODE_BASH_AGENT_INSTRUCTIONS = (
+    BENCHMARK_AGENT_INSTRUCTIONS
+    + """
+## InterCode-Bash submission rule
+
+The official evaluator uses the resulting container state and the stdout/stderr from your final `benchmark_action` call.
+You may use earlier calls to inspect the environment.
+When ready, make the last `benchmark_action` the command that directly solves the task, then call `finish`.
+Do not run another `benchmark_action` for verification after the final command.
+"""
+)
 
 _GIT_RESET_SCRIPT = "git reset --hard; git clean -fd;"
 _GIT_STATUS_SCRIPT = "git status --short;"
@@ -223,6 +235,7 @@ class InterCodeBashAdapter:
                     timeout_seconds=self.command_timeout_seconds,
                     max_output_chars=self.max_output_chars,
                 ),
+                agent_instructions=INTERCODE_BASH_AGENT_INSTRUCTIONS,
             )
             _write_json_atomic(
                 adapter_state,
@@ -771,6 +784,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "INTERCODE_BASH_AGENT_INSTRUCTIONS",
     "INTERCODE_BASH_EVALUATOR_NAME",
     "INTERCODE_BASH_SCHEMA_VERSION",
     "InterCodeBashAdapter",

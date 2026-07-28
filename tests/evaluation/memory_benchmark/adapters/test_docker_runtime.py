@@ -430,6 +430,64 @@ def test_project_tool_config_loads_only_benchmark_action(tmp_path: Path) -> None
     assert (repo / "AGENT.md").read_text(encoding="utf-8") == BENCHMARK_AGENT_INSTRUCTIONS
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        r"find /testbed -type f -exec echo {} \;",
+        r"awk '{print $1}' /testbed/input.txt",
+        r'printf "%s\n" "${FILES}"',
+    ],
+)
+def test_project_tool_preflight_allows_braces_from_arguments(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = BenchmarkActionState(
+        container_name="fixture-container",
+        runtime_action_log_path=tmp_path / "opaque" / "actions.jsonl",
+        timeout_seconds=120,
+        max_output_chars=4000,
+    )
+    write_benchmark_action_files(repo, state)
+    source = ConfigToolSource(
+        repo / ".agentcli" / "tools.json",
+        source_name="config:project",
+    )
+    registration = source.load(ToolContext(repo_root=repo))[0]
+
+    assert registration.preflight is not None
+    registration.preflight({"command": command}, ToolContext(repo_root=repo))
+
+
+def test_project_tool_preflight_rejects_unsupported_template_syntax(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = BenchmarkActionState(
+        container_name="fixture-container",
+        runtime_action_log_path=tmp_path / "opaque" / "actions.jsonl",
+        timeout_seconds=120,
+        max_output_chars=4000,
+    )
+    write_benchmark_action_files(repo, state)
+    config_path = repo / ".agentcli" / "tools.json"
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["tools"][0]["command"]["argv"][-1] = "{command.value}"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    source = ConfigToolSource(config_path, source_name="config:project")
+    registration = source.load(ToolContext(repo_root=repo))[0]
+
+    assert registration.preflight is not None
+    with pytest.raises(ValueError, match="unsupported template syntax"):
+        registration.preflight(
+            {"command": "printf ok"},
+            ToolContext(repo_root=repo),
+        )
+
+
 def test_tools_hash_covers_tool_config_and_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     original = benchmark_action_tools_hash()
     assert original == canonical_sha256(

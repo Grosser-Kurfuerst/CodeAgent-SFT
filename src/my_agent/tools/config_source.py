@@ -262,6 +262,10 @@ def _prepare_configured_command(
 
 
 def _render_template(template: str, arguments: dict[str, Any], tool_name: str) -> str:
+    unsupported_syntax = _PLACEHOLDER_RE.sub("", template)
+    if "{" in unsupported_syntax or "}" in unsupported_syntax:
+        raise ValueError(f"Tool {tool_name} contains unsupported template syntax: {template}")
+
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in arguments:
@@ -271,10 +275,7 @@ def _render_template(template: str, arguments: dict[str, Any], tool_name: str) -
             raise ValueError(f"Tool {tool_name} template argument must be scalar: {key}")
         return str(value)
 
-    rendered = _PLACEHOLDER_RE.sub(replace, template)
-    if "{" in rendered or "}" in rendered:
-        raise ValueError(f"Tool {tool_name} contains unsupported template syntax: {template}")
-    return rendered
+    return _PLACEHOLDER_RE.sub(replace, template)
 
 
 def _extract_template_args(templates: list[str]) -> set[str]:
