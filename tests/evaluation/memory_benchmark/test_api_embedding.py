@@ -64,6 +64,31 @@ def test_embedding_batch_is_restored_by_provider_index() -> None:
     )
 
 
+def test_embedding_requests_are_split_into_provider_sized_batches() -> None:
+    responses = [
+        _response(
+            *((index, [float(start + index)]) for index in range(size))
+        )
+        for start, size in ((0, 10), (10, 10), (20, 3))
+    ]
+    client = _client(*responses)
+    encoder = MemoryBenchmarkApiEmbeddingEncoder(_endpoint(), client=client)
+    texts = tuple(f"text-{index}" for index in range(23))
+
+    assert encoder.encode_documents(texts) == tuple(
+        (float(index),) for index in range(23)
+    )
+    assert [len(request["input"]) for request in client.embeddings.requests] == [
+        10,
+        10,
+        3,
+    ]
+    metrics = encoder.metrics_snapshot()
+    assert metrics.calls == 3
+    assert metrics.encoded_texts == 23
+    assert metrics.dimension == 1
+
+
 @pytest.mark.parametrize(
     ("response", "match"),
     [

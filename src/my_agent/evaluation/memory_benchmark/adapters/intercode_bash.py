@@ -39,6 +39,7 @@ INTERCODE_BASH_EVALUATOR_NAME = "intercode-bash"
 _GIT_RESET_SCRIPT = "git reset --hard; git clean -fd;"
 _GIT_STATUS_SCRIPT = "git status --short;"
 _EVALUATOR_MAX_OUTPUT_CHARS = 1_000_000
+_INTERCODE_WORKING_DIRECTORY = "/testbed"
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ class InterCodeBashAdapter:
                 "schema_version": INTERCODE_BASH_SCHEMA_VERSION,
                 "source_revision": self.source_revision,
                 "entrypoint": self.evaluator_entrypoint,
+                "working_directory": _INTERCODE_WORKING_DIRECTORY,
                 "evaluator_command_timeout_seconds": (
                     self.evaluator_command_timeout_seconds
                 ),
@@ -200,6 +202,7 @@ class InterCodeBashAdapter:
                 seed=seed,
                 benchmark=task.benchmark,
                 task_id=task.task_id,
+                working_directory=_INTERCODE_WORKING_DIRECTORY,
             )
             created.append(agent_container)
             evaluation_container = self.docker_runtime.create_container(
@@ -209,6 +212,7 @@ class InterCodeBashAdapter:
                 seed=seed,
                 benchmark=task.benchmark,
                 task_id=f"{task.task_id}-gold",
+                working_directory=_INTERCODE_WORKING_DIRECTORY,
             )
             created.append(evaluation_container)
             write_benchmark_action_files(
@@ -321,6 +325,7 @@ class InterCodeBashAdapter:
                 "task_data_revision": self.task_data_revision,
                 "container_image": self.container_image,
                 "container_digest": self.container_digest,
+                "working_directory": _INTERCODE_WORKING_DIRECTORY,
                 "reset_command_hash": canonical_sha256(_GIT_RESET_SCRIPT),
             },
             evaluator_spec={

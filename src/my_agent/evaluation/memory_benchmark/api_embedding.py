@@ -11,6 +11,9 @@ from typing import Any, Callable
 from my_agent.evaluation.memory_benchmark.api_config import ApiEndpoint
 
 
+_MAX_EMBEDDING_BATCH_SIZE = 10
+
+
 @dataclass(frozen=True)
 class ApiEmbeddingMetrics:
     calls: int = 0
@@ -69,25 +72,31 @@ class MemoryBenchmarkApiEmbeddingEncoder:
         inputs = tuple(str(text) for text in texts)
         if not inputs:
             return ()
-        started = self._clock()
-        try:
-            response = self._client.embeddings.create(
-                model=self.model,
-                input=list(inputs),
-            )
-            vectors = _ordered_vectors(getattr(response, "data", None), len(inputs))
-            dimension = len(vectors[0])
-            if self._dimension is not None and dimension != self._dimension:
-                raise ValueError(
-                    "embedding API dimension changed from "
-                    f"{self._dimension} to {dimension}"
+        vectors: list[tuple[float, ...]] = []
+        for start in range(0, len(inputs), _MAX_EMBEDDING_BATCH_SIZE):
+            batch = inputs[start : start + _MAX_EMBEDDING_BATCH_SIZE]
+            started = self._clock()
+            try:
+                response = self._client.embeddings.create(
+                    model=self.model,
+                    input=list(batch),
                 )
-            self._dimension = dimension
-            self._encoded_texts += len(inputs)
-            return vectors
-        finally:
-            self._calls += 1
-            self._elapsed_sec += max(0.0, self._clock() - started)
+                batch_vectors = _ordered_vectors(
+                    getattr(response, "data", None), len(batch)
+                )
+                dimension = len(batch_vectors[0])
+                if self._dimension is not None and dimension != self._dimension:
+                    raise ValueError(
+                        "embedding API dimension changed from "
+                        f"{self._dimension} to {dimension}"
+                    )
+                self._dimension = dimension
+                self._encoded_texts += len(batch)
+                vectors.extend(batch_vectors)
+            finally:
+                self._calls += 1
+                self._elapsed_sec += max(0.0, self._clock() - started)
+        return tuple(vectors)
 
 
 def _ordered_vectors(data: Any, expected_count: int) -> tuple[tuple[float, ...], ...]:

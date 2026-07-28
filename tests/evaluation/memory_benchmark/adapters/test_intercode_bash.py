@@ -270,6 +270,11 @@ def test_intercode_prepare_keeps_gold_hidden_and_creates_two_containers(
     assert len(runtime.created) == 2
     assert runtime.created[0]["task_id"] == "0"
     assert runtime.created[1]["task_id"] == "0-gold"
+    assert [item["working_directory"] for item in runtime.created] == [
+        "/testbed",
+        "/testbed",
+    ]
+    assert task.environment_spec["working_directory"] == "/testbed"
 
     adapter.cleanup_task(prepared)
     assert len(runtime.cleaned) == 2
