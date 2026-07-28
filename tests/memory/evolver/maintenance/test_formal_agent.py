@@ -271,6 +271,84 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
             "sha256:5b090bed52e7475538ea09fa9741dc0d245b00807b1cded97d7a70f6ac9644bb",
         )
 
+    def test_invalid_merge_preserves_prior_staged_operation_then_finish_commits(self) -> None:
+        calls = [
+            _call("merge", {
+                "source_ids": ["tip-a", "tip-b"],
+                "replacement": {
+                    "content": "Run focused tests before the full suite.",
+                    "payload": {
+                        "category": "testing",
+                        "severity": "info",
+                        "trigger": "verification",
+                    },
+                },
+                "reason": "combine duplicate verification tips",
+            }),
+            _call("merge", {
+                "source_ids": ["skill-a", "trajectory-a"],
+                "replacement": {
+                    "content": "Run tests in increasing scope.",
+                    "payload": {
+                        "category": "testing",
+                        "preconditions": ["Focused and full test commands are available."],
+                        "steps": ["Run focused tests.", "Run the full suite."],
+                        "technique": "Increase verification scope after focused checks pass.",
+                    },
+                },
+                "reason": "combine similar testing memories",
+            }),
+            _call("finish", {"summary": "kept the valid merge"}),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExperienceStore.from_dir(tmp)
+            for memory_id, content, tier in (
+                ("tip-a", "Run focused tests first.", ExperienceTier.TIP),
+                ("tip-b", "Start with focused tests.", ExperienceTier.TIP),
+                ("skill-a", "Run tests in increasing scope.", ExperienceTier.SKILL),
+                (
+                    "trajectory-a",
+                    "Focused tests passed before the full suite.",
+                    ExperienceTier.TRAJECTORY,
+                ),
+            ):
+                store.add(typed_experience(
+                    memory_id,
+                    content,
+                    tier,
+                    project_key="project-a",
+                    created_by=ExperienceCreatedBy.WRITER,
+                ))
+            policy = _Policy(calls)
+            agent = FormalMaintenanceAgent(
+                policy=policy,
+                recorder=DecisionEventRecorder(policy=policy),
+                store=store,
+                project_key="project-a",
+            )
+
+            result = agent.run(
+                maintenance_id=_cadence_id(),
+                attempt_id="attempt-a",
+                stream_id="stream-a",
+                task_group="group-a",
+            )
+            memories = {item.id: item for item in store.all(project_key="project-a")}
+
+        error_observation = json.loads(policy.requests[2].messages[-1].content)
+        self.assertEqual(result.status, "committed")
+        self.assertEqual(result.turns, 3)
+        self.assertEqual(len(result.operation_ids), 1)
+        self.assertEqual(set(memories), {"tip-a", "skill-a", "trajectory-a"})
+        self.assertEqual(memories["tip-a"].content, "Run focused tests before the full suite.")
+        self.assertEqual(error_observation["status"], "error")
+        self.assertEqual(error_observation["error_type"], "MaintenancePlanError")
+        self.assertEqual(
+            error_observation["message"], "merge operation sources must have one tier"
+        )
+        self.assertFalse(error_observation["operation_staged"])
+        self.assertEqual(error_observation["staged_operation_ids"], list(result.operation_ids))
+
     def test_lookup_accepts_exact_snapshot_memory_id(self) -> None:
         calls = [
             _call("lookup", {"query": "tip-a", "tiers": [], "limit": 10}),
@@ -354,7 +432,7 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
             {"tip-a", "skill-a"},
         )
 
-    def test_protected_delete_aborts_without_mutation(self) -> None:
+    def test_protected_delete_reports_error_then_finish_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = ExperienceStore.from_dir(tmp)
             protected = typed_experience(
@@ -363,10 +441,13 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
                 protected=True,
             )
             store.add(protected)
-            policy = _Policy([_call("delete", {
-                "source_ids": ["tip-protected"],
-                "reason": "remove it",
-            })])
+            policy = _Policy([
+                _call("delete", {
+                    "source_ids": ["tip-protected"],
+                    "reason": "remove it",
+                }),
+                _call("finish", {"summary": "kept protected memory"}),
+            ])
             agent = FormalMaintenanceAgent(
                 policy=policy,
                 recorder=DecisionEventRecorder(policy=policy),
@@ -382,7 +463,10 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
             )
             remaining = store.get("tip-protected")
 
-        self.assertEqual(result.status, "aborted")
+        observation = json.loads(policy.requests[1].messages[-1].content)
+        self.assertEqual(result.status, "noop")
+        self.assertEqual(observation["status"], "error")
+        self.assertFalse(observation["operation_staged"])
         self.assertEqual(remaining, protected)
 
     def test_staged_mutation_without_finish_never_changes_repository(self) -> None:

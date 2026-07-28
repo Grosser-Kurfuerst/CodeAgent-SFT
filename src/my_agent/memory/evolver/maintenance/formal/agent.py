@@ -171,14 +171,34 @@ class FormalMaintenanceAgent:
                 ))
                 if command.name == "lookup":
                     observation = self._lookup(command, entries=entries)
-                elif command.name == "delete":
-                    staged.append(build_delete_operation(command, repository_entries=entries))
-                    validate_formal_operations(entries, staged, project_key=self.project_key)
-                    observation = {"status": "staged", "operation_id": staged[-1].operation_id}
-                elif command.name == "merge":
-                    staged.append(build_merge_operation(command, repository_entries=entries))
-                    validate_formal_operations(entries, staged, project_key=self.project_key)
-                    observation = {"status": "staged", "operation_id": staged[-1].operation_id}
+                elif command.name in {"delete", "merge"}:
+                    try:
+                        candidate = (
+                            build_delete_operation(command, repository_entries=entries)
+                            if command.name == "delete"
+                            else build_merge_operation(command, repository_entries=entries)
+                        )
+                        validate_formal_operations(
+                            entries,
+                            (*staged, candidate),
+                            project_key=self.project_key,
+                        )
+                    except (MaintenancePlanError, ValueError) as exc:
+                        observation = {
+                            "status": "error",
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                            "operation_staged": False,
+                            "staged_operation_ids": [
+                                operation.operation_id for operation in staged
+                            ],
+                        }
+                    else:
+                        staged.append(candidate)
+                        observation = {
+                            "status": "staged",
+                            "operation_id": candidate.operation_id,
+                        }
                 else:
                     summary = str(command.arguments["summary"])
                     applied = apply_formal_maintenance_operations(
