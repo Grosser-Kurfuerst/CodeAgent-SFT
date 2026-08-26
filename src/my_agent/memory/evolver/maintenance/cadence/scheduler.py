@@ -196,6 +196,11 @@ class MaintenanceCadenceScheduler:
                 maintenance_plan_id=result.plan_id,
                 repository_revision_after=result.after_revision,
             )
+        else:
+            self.ledger.mark_failed(
+                cadence.cadence_id,
+                repository_revision_after=result.after_revision,
+            )
         self._trace("memory.evolver_maintenance_cadence", {
             "cadence_id": cadence.cadence_id,
             "cadence_index": cadence.cadence_index,

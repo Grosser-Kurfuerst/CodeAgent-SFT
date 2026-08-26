@@ -46,11 +46,18 @@ def maintenance_initial_messages(public: MaintenancePublic) -> tuple[CanonicalMe
             "Maintain the repository only through lookup, merge, delete, and finish tools. "
             "Issue exactly one tool call per turn and no prose. All mutations are staged until "
             "finish. Use source_ids only from repository_snapshot.memory_ids or earlier lookup "
-            "hits; never invent memory IDs. Use lookup before changing memories whose content "
-            "has not been inspected. Merge only same-tier memories and preserve that tier's "
-            "payload schema. Delete only when the supplied repository/history evidence supports "
-            "removal. If the repository is empty or no safe change is needed, call finish with "
-            "a short summary.",
+            "hits; never invent memory IDs. If the repository is empty, meaning "
+            "repository_snapshot.memory_ids is empty, call finish immediately. Otherwise inspect "
+            "uninspected memories by calling lookup with "
+            "one complete, exact memory ID from repository_snapshot.memory_ids as the query. "
+            "Never query memory_project_key, stream_id, task_group, or path fragments from those "
+            "fields. Use lookup before changing memories whose content has not been inspected. "
+            "After the relevant memories have been inspected, merge only same-tier memories and "
+            "preserve that tier's payload schema. Delete only when the supplied repository/history "
+            "evidence supports removal. If no safe change is needed, call finish with a short "
+            "summary. Example: for memory_ids [\"exp-abc\"], first call lookup with query "
+            "\"exp-abc\"; after inspecting it, call finish when no safe mutation is justified. "
+            "You must call finish within the available turns.",
         ),
         CanonicalMessage(
             "user",

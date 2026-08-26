@@ -155,6 +155,28 @@ class CollectionRoundTests(unittest.TestCase):
                     output_dir=Path(tmp),
                 )
 
+    def test_build_round_rejects_missing_roles_before_writing_dataset(self) -> None:
+        fixture = round_fixture()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "d0"
+            with self.assertRaisesRegex(
+                ValueError,
+                "required roles are missing: \\['maintenance'\\]",
+            ):
+                build_collection_round(
+                    collection_round=0,
+                    policy=FakeTrainablePolicy(),
+                    tasks=fixture.tasks,
+                    outcomes=fixture.outcomes,
+                    repositories=fixture.repositories,
+                    maintenance=(),
+                    decision_events=fixture.decisions,
+                    attribution=fixture.attribution,
+                    output_dir=output,
+                )
+
+            self.assertFalse(output.exists())
+
     def test_attribution_ablations_change_the_effective_training_evidence(self) -> None:
         fixture = round_fixture()
         for ablation in ("no_attribution", "similarity_only"):

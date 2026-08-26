@@ -25,8 +25,8 @@ def _identity() -> PolicyIdentity:
 
 
 class _Policy:
-    def __init__(self, output: str, *, on_generate=None) -> None:
-        self.output = output
+    def __init__(self, output: str | list[str], *, on_generate=None) -> None:
+        self.outputs = list(output) if isinstance(output, list) else [output]
         self.on_generate = on_generate
         self.requests = []
 
@@ -40,8 +40,9 @@ class _Policy:
         self.requests.append(request)
         if self.on_generate is not None:
             self.on_generate()
+        output = self.outputs.pop(0) if len(self.outputs) > 1 else self.outputs[0]
         return DecisionResponse(
-            raw_completion=self.output,
+            raw_completion=output,
             prompt_token_ids=(10,),
             completion_token_ids=(20,),
             assistant_loss_mask=(1,),
@@ -50,7 +51,7 @@ class _Policy:
         )
 
     def chat_response_from_decision(self, response):
-        return ChatResponse(content=self.output)
+        return ChatResponse(content=response.raw_completion)
 
     def chat(self, *args, **kwargs):
         raise AssertionError("not used")
@@ -107,6 +108,7 @@ class FormalLLMWriterTests(unittest.TestCase):
         )
         self.assertIn("code", prompt["tier_payload_schemas"]["tool"])
         self.assertIn("command", prompt["tier_payload_schemas"]["tool"])
+        self.assertEqual(prompt["example_record"]["tier"], "skill")
         self.assertIn("return []", request.messages[0].content)
 
     @staticmethod
@@ -165,7 +167,7 @@ class FormalLLMWriterTests(unittest.TestCase):
         normalized = {**decision, "decision_id": "<decision-id>"}
         self.assertEqual(
             canonical_sha256(normalized),
-            "sha256:ecaac17142431218ca7cdf0059484f3dc39c4eee2d2dc6cadb180e13cdecd8a5",
+            "sha256:8df71a0c376d78371ad45cbceacbc5b664def8a506901425ebe8c1a200e760b0",
         )
 
     def test_formal_writer_uses_shared_validator_without_legacy_writer(self) -> None:
@@ -200,6 +202,40 @@ class FormalLLMWriterTests(unittest.TestCase):
         decision = next(payload for event, payload in events if event == "opd.decision")
         self.assertEqual(decision["status"], "invalid_output")
         self.assertEqual(decision["completion_token_ids"], [20])
+
+    def test_invalid_writer_output_retries_once_with_validation_error(self) -> None:
+        valid = json.dumps([{
+            "tier": "skill",
+            "content": "Use a set to track previously seen values.",
+            "payload": {
+                "category": "deduplication",
+                "technique": "seen-set scan",
+                "preconditions": [],
+                "steps": ["scan values", "check membership", "record unseen values"],
+            },
+            "confidence": 0.9,
+            "reason": "reusable linear-time pattern",
+        }])
+        events = []
+        policy = _Policy(["not-json", valid])
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExperienceStore.from_dir(tmp)
+            coordinator = EvolverCoordinator(
+                store=store,
+                project_key="project-a",
+                policy_identity=_identity(),
+                policy=policy,
+                trace_sink=lambda event, payload: events.append((event, payload)),
+            )
+
+            result = coordinator.finalize_task(_episode(store), _outcome())
+
+        decisions = [payload for event, payload in events if event == "opd.decision"]
+        self.assertEqual(result.writer_status, "committed")
+        self.assertEqual([item["status"] for item in decisions], ["invalid_output", "success"])
+        self.assertEqual(decisions[1]["retry_of"], decisions[0]["decision_id"])
+        correction = json.loads(policy.requests[1].messages[-1].content)
+        self.assertIn("writer output must be valid JSON", correction["validation_error"])
 
     def test_schema_invalid_field_types_cannot_mutate_repository(self) -> None:
         output = json.dumps([{

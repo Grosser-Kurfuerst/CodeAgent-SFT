@@ -28,7 +28,7 @@ from my_agent.opd_data.schema import (
     TaskOutcomeEvidence,
 )
 from my_agent.opd_data.attribution.schema import PaperAttributionRecord
-from my_agent.policy.contracts import TrainablePolicy
+from my_agent.policy.contracts import EVOLVER_ROLES, TrainablePolicy
 from my_agent.policy.identity import canonical_json_bytes, canonical_sha256
 from my_agent.training.contracts import DecisionEvent
 from my_agent.training.ablation import effective_attribution
@@ -163,6 +163,15 @@ def build_collection_round(
     samples = tuple(samples_list)
     if policy.identity() != identity:
         raise ValueError("collection policy identity changed during learner regeneration")
+    _require_role_coverage(
+        samples,
+        excluded_roles=excluded_roles,
+        exclusions=tuple((
+            *prepared.exclusions,
+            *rollout_exclusions,
+            *(item.to_dict() for item in runtime_exclusions),
+        )),
+    )
     validate_learner_samples(
         samples,
         collection_round=collection_round,
@@ -229,6 +238,32 @@ def build_collection_round(
     manifest_path = root / EXPORT_MANIFEST_FILENAME
     manifest_path.write_bytes(canonical_json_bytes(manifest.to_dict()) + b"\n")
     return CollectionRoundResult(learner_path, manifest_path, manifest)
+
+
+def _require_role_coverage(
+    samples: Sequence[Any],
+    *,
+    excluded_roles: frozenset[str],
+    exclusions: Sequence[Mapping[str, Any]],
+) -> None:
+    expected_roles = EVOLVER_ROLES - excluded_roles
+    role_counts = Counter(str(sample.role) for sample in samples)
+    missing = sorted(expected_roles - set(role_counts))
+    if not missing:
+        return
+    reasons: dict[str, Counter[str]] = {role: Counter() for role in missing}
+    for exclusion in exclusions:
+        role = str(exclusion.get("role") or "")
+        if role in reasons:
+            reasons[role][str(exclusion.get("reason") or "unknown")] += 1
+    diagnostics = "; ".join(
+        f"{role}=0 exclusions={dict(sorted(reasons[role].items()))}"
+        for role in missing
+    )
+    raise ValueError(
+        "formal OPD round is not trainable because required roles are missing: "
+        f"{missing}; {diagnostics}"
+    )
 
 
 def build_replay_ablation_dataset(

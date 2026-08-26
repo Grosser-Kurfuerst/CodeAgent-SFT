@@ -113,6 +113,8 @@ class FormalMaintenanceAgent:
         )
         messages = list(maintenance_initial_messages(public))
         staged: list[MaintenanceOperation] = []
+        snapshot_memory_ids = tuple(entry.id for entry in entries)
+        inspected_memory_ids: set[str] = set()
         for turn_index in range(self.max_turns):
             parsed_commands: list[MaintenanceToolCommand] = []
             request = build_maintenance_request(
@@ -160,6 +162,26 @@ class FormalMaintenanceAgent:
                 ))
                 if command.name == "lookup":
                     observation = self._lookup(command, entries=entries)
+                    inspected_memory_ids.update(
+                        str(hit["memory_id"])
+                        for hit in observation["hits"]
+                    )
+                    remaining_ids = tuple(
+                        memory_id
+                        for memory_id in snapshot_memory_ids
+                        if memory_id not in inspected_memory_ids
+                    )
+                    exact_query = str(command.arguments["query"]) in snapshot_memory_ids
+                    observation.update({
+                        "query_was_exact_memory_id": exact_query,
+                        "remaining_uninspected_memory_ids": list(remaining_ids),
+                        "hint": (
+                            "Use one complete memory ID from "
+                            "remaining_uninspected_memory_ids as the next lookup query."
+                            if remaining_ids
+                            else "Call finish if no merge or delete is justified."
+                        ),
+                    })
                 elif command.name == "delete":
                     staged.append(build_delete_operation(command, repository_entries=entries))
                     validate_formal_operations(entries, staged, project_key=self.project_key)

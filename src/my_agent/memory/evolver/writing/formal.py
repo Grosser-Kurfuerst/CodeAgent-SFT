@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from math import isfinite
 from typing import Any
 import json
@@ -112,15 +113,43 @@ class FormalExperienceWriter:
             repository_revision=episode.session.repository_revision,
             candidate_snapshot_hash=episode.session.candidate_snapshot_hash,
         )
-        try:
-            self.recorder.generate(
-                request,
-                context=context,
-                parse_response=parse_response,
-            )
-        except DecisionAttemptError as exc:
+        retry_of: str | None = None
+        for attempt_index in range(2):
+            attempt_request = request
+            attempt_context = context
+            if attempt_index:
+                attempt_request = replace(
+                    request,
+                    messages=(*request.messages, CanonicalMessage(
+                        "user",
+                        canonical_json_bytes({
+                            "validation_error": retry_error,
+                            "instruction": (
+                                "Return only one valid JSON array that exactly matches the "
+                                "record schema and one tier payload schema. Use [] only when "
+                                "the trajectory contains no reusable experience."
+                            ),
+                        }).decode("utf-8"),
+                    )),
+                )
+                attempt_context = replace(context, turn_index=1, step_index=1)
+            try:
+                self.recorder.generate(
+                    attempt_request,
+                    context=attempt_context,
+                    retry_of=retry_of,
+                    parse_response=parse_response,
+                )
+                break
+            except DecisionAttemptError as exc:
+                retry_of = exc.decision_id
+                retry_error = f"{type(exc.cause).__name__}: {exc.cause}"
+        else:
             return ExperienceWriteResult(
-                rejected=({"reason": "invalid_or_failed_llm_output", "error": str(exc)},),
+                rejected=({
+                    "reason": "invalid_or_failed_llm_output",
+                    "error": retry_error,
+                },),
                 llm_used=True,
                 fallback_used=False,
             )
@@ -164,8 +193,9 @@ def build_writing_request(
                 "unsupported claims. Use trajectory for a reusable multi-step path, tip for a "
                 "concise warning, skill for a general technique, and tool only for a reusable "
                 "executable helper. Do not create a tool record for a generic command such as "
-                "pytest or git unless the trajectory introduced a reusable wrapper. If there "
-                "is no reusable experience, return []. Return only "
+                "pytest or git unless the trajectory introduced a reusable wrapper. For a "
+                "resolved task with a clear reusable technique, prefer one concise skill record. "
+                "If there is no reusable experience, return []. Return only "
                 "one JSON array matching the record and tier payload schemas, with no prose.",
             ),
             CanonicalMessage(
@@ -180,6 +210,22 @@ def build_writing_request(
                         "payload": "exactly one matching tier payload below",
                         "confidence": f"number in [{min_confidence}, 1.0]",
                         "reason": "brief evidence-based reason",
+                    },
+                    "example_record": {
+                        "tier": "skill",
+                        "content": "Track previously seen values with a set during one scan.",
+                        "payload": {
+                            "category": "deduplication",
+                            "technique": "seen-set scan",
+                            "preconditions": ["values are hashable"],
+                            "steps": [
+                                "initialize an empty set",
+                                "scan each value",
+                                "check membership before adding the value",
+                            ],
+                        },
+                        "confidence": max(min_confidence, 0.9),
+                        "reason": "the successful trajectory demonstrates a reusable pattern",
                     },
                     "tier_payload_schemas": _writing_payload_schemas(),
                 }).decode("utf-8"),

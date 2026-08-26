@@ -373,6 +373,43 @@ class CadenceLedger:
         assert committed_row is not None
         return _cadence_from_row(committed_row)
 
+    def mark_failed(
+        self,
+        cadence_id: str,
+        *,
+        repository_revision_after: str,
+    ) -> CadenceRecord:
+        """Close an aborted cadence so later tasks do not retry it indefinitely."""
+
+        require_sha256(cadence_id, field_name="cadence_id")
+        _require_nonblank(repository_revision_after, "repository_revision_after")
+        with self._locked():
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = _load_cadence_row(connection, cadence_id)
+                if row is None:
+                    raise ValueError(f"unknown cadence_id: {cadence_id}")
+                current = _cadence_from_row(row)
+                if current.status == "failed":
+                    if current.repository_revision_after != repository_revision_after:
+                        raise ValueError("failed cadence repository revision does not match")
+                    connection.commit()
+                    return current
+                if current.status == "committed":
+                    raise ValueError("committed cadence cannot be marked failed")
+                connection.execute(
+                    """
+                    UPDATE maintenance_cadence
+                    SET status = 'failed', repository_revision_after = ?, updated_at = ?
+                    WHERE cadence_id = ?
+                    """,
+                    (repository_revision_after, _now(), cadence_id),
+                )
+                failed_row = _load_cadence_row(connection, cadence_id)
+                connection.commit()
+        assert failed_row is not None
+        return _cadence_from_row(failed_row)
+
     def task_count(self, *, stream_id: str, memory_project_key: str) -> int:
         with self._locked():
             with self._connect() as connection:

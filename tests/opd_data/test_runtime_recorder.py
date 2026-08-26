@@ -705,6 +705,13 @@ class OpdRuntimeRecorderTests(unittest.TestCase):
                     stream_id="stream-a",
                     memory_project_key="project-a",
                 )
+                cadence_statuses = tuple(
+                    item.status
+                    for item in coordinator.cadence_ledger.cadence_records(
+                        stream_id="stream-a",
+                        memory_project_key="project-a",
+                    )
+                )
 
             self.assertEqual(len(outcomes), 1)
             self.assertEqual(task_count, 1)
@@ -713,6 +720,7 @@ class OpdRuntimeRecorderTests(unittest.TestCase):
                 self.assertEqual(task_records, ())
             if expected_role == "maintenance":
                 self.assertEqual(result.maintenance_status, "aborted")
+                self.assertEqual(cadence_statuses, ("failed",))
 
 
 if __name__ == "__main__":

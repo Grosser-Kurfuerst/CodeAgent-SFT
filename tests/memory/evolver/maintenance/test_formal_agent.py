@@ -98,6 +98,7 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
         self.assertIn("repository is empty", request.messages[0].content)
         self.assertIn("exactly one tool call", request.messages[0].content)
         self.assertIn("never invent memory IDs", request.messages[0].content)
+        self.assertIn('lookup with query "exp-abc"', request.messages[0].content)
 
     def test_tools_exclude_promote(self) -> None:
         self.assertEqual(
@@ -174,7 +175,7 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
         ]
         self.assertEqual(
             canonical_sha256(normalized),
-            "sha256:e9d940e8106d33cafe2e142ba0fb95987f06e211b9ec56737ed0b99cedc1f35a",
+            "sha256:ef168fd142cf9548db1824446e65d447b662f63f007fd379ea5e95cbe878eaa5",
         )
 
     def test_lookup_accepts_exact_snapshot_memory_id(self) -> None:
@@ -209,6 +210,45 @@ class FormalMaintenanceAgentTests(unittest.TestCase):
         observation = json.loads(policy.requests[1].messages[-1].content)
         self.assertEqual(result.status, "noop")
         self.assertEqual(observation["hits"][0]["memory_id"], "tip-a")
+        self.assertTrue(observation["query_was_exact_memory_id"])
+        self.assertEqual(observation["remaining_uninspected_memory_ids"], [])
+        self.assertIn("Call finish", observation["hint"])
+
+    def test_non_exact_empty_lookup_points_to_snapshot_memory_id(self) -> None:
+        calls = [
+            _call("lookup", {"query": "project-a"}),
+            _call("finish", {"summary": "no safe change"}),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ExperienceStore.from_dir(tmp)
+            store.add(typed_experience(
+                "tip-a",
+                "Run focused tests first.",
+                ExperienceTier.TIP,
+                project_key="project-a",
+                created_by=ExperienceCreatedBy.WRITER,
+            ))
+            policy = _Policy(calls)
+            agent = FormalMaintenanceAgent(
+                policy=policy,
+                recorder=DecisionEventRecorder(policy=policy),
+                store=store,
+                project_key="project-a",
+            )
+
+            result = agent.run(
+                maintenance_id=_cadence_id(),
+                attempt_id="attempt-a",
+                stream_id="stream-a",
+                task_group="group-a",
+            )
+
+        observation = json.loads(policy.requests[1].messages[-1].content)
+        self.assertEqual(result.status, "noop")
+        self.assertEqual(observation["hits"], [])
+        self.assertFalse(observation["query_was_exact_memory_id"])
+        self.assertEqual(observation["remaining_uninspected_memory_ids"], ["tip-a"])
+        self.assertIn("complete memory ID", observation["hint"])
 
     def test_protected_delete_aborts_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
